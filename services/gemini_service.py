@@ -485,6 +485,45 @@ def consolidate_items_with_llm(items, category: str, status_placeholder=None):
 
     return consolidated
 
+def split_items_one_per_line(items, category: str, status_placeholder=None):
+    """LLM을 사용해 입력 항목들을 '한 항목당 정확히 1줄'로 분리/정리하여 반환.
+    - 요약/합치기 금지, 단순 분리 및 최소 정규화만 수행
+    - 중복은 제거하되, 서로 다른 항목은 합치지 않음
+    """
+    if not items:
+        return []
+
+    raw_text = "\n".join([str(x) for x in items if str(x).strip()])
+
+    prompt = f"""
+당신은 추출된 텍스트를 항목별로 정확히 1줄씩 분리하는 도우미입니다.
+카테고리: {category}
+
+규칙:
+- 각 '항목'이 1줄을 차지하도록 분리하세요.
+- 서로 다른 항목을 합치거나 요약하지 마세요.
+- 같은 의미의 중복 항목은 제거하세요.
+- 새 정보를 만들어내지 마세요.
+
+입력 텍스트:
+{raw_text}
+
+아래 JSON만 반환하세요. 설명 금지.
+```json
+{{
+  "items": ["항목1", "항목2"]
+}}
+```
+"""
+
+    if status_placeholder:
+        status_placeholder.info("🧩 페이지 항목 1줄 분리 중…")
+
+    model = genai.GenerativeModel(GEMINI_MODEL)
+    resp = call_gemini_with_retry(model, prompt, max_retries=2, base_delay=1, status_placeholder=status_placeholder)
+    split_list = _parse_items_json(resp)
+    return split_list or items
+
 def enhance_user_prompt(user_prompt, status_placeholder=None):
     """사용자의 초기 프롬프트를 더 명확하고 구체적으로 개선"""
     try:

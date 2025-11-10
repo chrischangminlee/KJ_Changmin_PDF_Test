@@ -5,7 +5,7 @@ import os
 import unicodedata
 from PyPDF2 import PdfReader
 from services.pdf_service import annotate_pdf_with_page_numbers, convert_pdf_to_images, extract_single_page_pdf
-from services.gemini_service import extract_category_from_page, consolidate_items_with_llm
+from services.gemini_service import extract_category_from_page, consolidate_items_with_llm, split_items_one_per_line
 
 def run_upload_step():
     st.header("PDF 업로드 및 항목 선택")
@@ -360,7 +360,7 @@ def display_analysis_results():
         # 세션 상태 초기화
         for key in ['relevant_pages', 'page_info', 'user_prompt', 'refined_prompt', 'final_summary',
                     'original_pdf_bytes', 'pdf_images', 'example_pdf_loaded', 'example_pdf_bytes',
-                    'page_results', 'category']:
+                    'page_results', 'page_results_norm', 'category']:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
@@ -371,9 +371,25 @@ def display_extraction_results():
     st.header("📊 추출 결과")
     st.write(f"**추출 항목:** {st.session_state.get('category', '')}")
 
-    # 페이지별 결과 구성
+    # 페이지별 결과 LLM 정규화(한 항목당 1줄) - 최초 1회 수행 후 세션에 캐시
+    if 'page_results_norm' not in st.session_state:
+        norm = {}
+        status_ph = st.empty()
+        pages = sorted(st.session_state.page_results.keys())
+        progress = st.progress(0)
+        for idx, page_num in enumerate(pages):
+            progress.progress((idx + 1) / len(pages))
+            status_ph.info(f"🧩 페이지 {page_num} 항목 정리 중…")
+            items = st.session_state.page_results.get(page_num, [])
+            norm_items = split_items_one_per_line(items, st.session_state.get('category', ''), status_ph)
+            norm[page_num] = norm_items
+        progress.empty()
+        status_ph.empty()
+        st.session_state.page_results_norm = norm
+
+    # 페이지별 결과 구성 (정규화 결과 사용)
     rows = []
-    for page_num, items in sorted(st.session_state.page_results.items()):
+    for page_num, items in sorted(st.session_state.page_results_norm.items()):
         rows.append({
             '페이지': page_num,
             '추출 결과': "\n".join(items) if items else ""
@@ -452,7 +468,8 @@ def display_extraction_results():
     # 최종 취합 + LLM 정리 결과
     st.markdown("### 📋 최종 취합 결과")
     all_items = []
-    for items in st.session_state.page_results.values():
+    # 정규화된 결과를 취합
+    for items in st.session_state.page_results_norm.values():
         all_items.extend(items)
 
     if not all_items:
