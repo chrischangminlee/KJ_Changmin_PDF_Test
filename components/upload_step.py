@@ -8,10 +8,9 @@ def run_upload_step():
     st.header("PDF 업로드 및 질문 입력")
 
     # 예시 PDF 로드 기능
-    def load_example_pdf():
-        """예시 PDF 파일을 로드하여 세션 상태에 저장"""
+    def load_example_pdf(example_pdf_path: str):
+        """주어진 경로의 예시 PDF 파일을 로드하여 바이트로 반환"""
         try:
-            example_pdf_path = "Filereference/changminlee_intro.pdf"
             with open(example_pdf_path, "rb") as f:
                 return f.read()
         except Exception as e:
@@ -21,20 +20,44 @@ def run_upload_step():
     # 예시 PDF 불러오기 / 제거 버튼
     st.write("예시 PDF를 활용하거나, PDF를 불러오세요")
 
-    col1, _ = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.session_state.get('example_pdf_loaded', False):
             if st.button("🗑️ 예시 PDF 제거", type="secondary"):
                 st.session_state['example_pdf_loaded'] = False
-                if 'example_pdf_bytes' in st.session_state:
-                    del st.session_state['example_pdf_bytes']
+                for k in ['example_pdf_bytes', 'example_pdf_label', 'example_pdf_path']:
+                    if k in st.session_state:
+                        del st.session_state[k]
                 st.rerun()
         else:
-            if st.button("📄 예시 PDF (개발자 이창민 Intro) 불러오기", type="secondary"):
-                example_pdf_bytes = load_example_pdf()
+            # 좌/우에 두 개의 예시 PDF 불러오기 버튼 배치
+            pass
+    if not st.session_state.get('example_pdf_loaded', False):
+        with col2:
+            if st.button("📄 예시 PDF (구본명_경력증명서) 불러오기", type="secondary", key="load_example_gubm"):
+                path = "Filereference/구본명_경력증명서(24.09.12).pdf"
+                # 실제 파일명은 유니코드 정규화로 저장되어 있을 수 있으므로 그대로 경로 사용
+                # 위 경로는 시각적으로 표현한 것이며, 실제 파일명은 파일 시스템 상의 이름과 동일해야 함
+                # 실제 파일명 사용을 위해 디렉터리 내 존재하는 파일명을 그대로 명시
+                path = "Filereference/구본명_경력증명서(24.09.12).pdf"
+                example_pdf_bytes = load_example_pdf(path)
                 if example_pdf_bytes:
                     st.session_state['example_pdf_loaded'] = True
                     st.session_state['example_pdf_bytes'] = example_pdf_bytes
+                    st.session_state['example_pdf_label'] = "구본명_경력증명서"
+                    st.session_state['example_pdf_path'] = path
+                    st.success("✅ 예시 PDF가 로드되었습니다!")
+                    st.rerun()
+        with col3:
+            if st.button("📄 예시 PDF (윤덕철_경력증명서) 불러오기", type="secondary", key="load_example_yundc"):
+                path = "Filereference/윤덕철_경력증명서(23.11.13).pdf"
+                path = "Filereference/윤덕철_경력증명서(23.11.13).pdf"
+                example_pdf_bytes = load_example_pdf(path)
+                if example_pdf_bytes:
+                    st.session_state['example_pdf_loaded'] = True
+                    st.session_state['example_pdf_bytes'] = example_pdf_bytes
+                    st.session_state['example_pdf_label'] = "윤덕철_경력증명서"
+                    st.session_state['example_pdf_path'] = path
                     st.success("✅ 예시 PDF가 로드되었습니다!")
                     st.rerun()
 
@@ -42,7 +65,8 @@ def run_upload_step():
         col3, col4 = st.columns(2)
         with col3:
             if st.session_state.get('example_pdf_loaded', False):
-                st.info("📄 **예시 PDF (changminlee_intro.pdf)** 가 선택되었습니다.")
+                selected_label = st.session_state.get('example_pdf_label', '예시 PDF')
+                st.info(f"📄 **예시 PDF ({selected_label})** 가 선택되었습니다.")
                 pdf_file = None
             else:
                 pdf_file = st.file_uploader("PDF 파일을 선택하세요", type=['pdf'])
@@ -56,7 +80,7 @@ def run_upload_step():
         # PDF 파일 확인
         if st.session_state.get('example_pdf_loaded', False):
             pdf_bytes_to_process = st.session_state['example_pdf_bytes']
-            # pdf_source = "예시 PDF (changminlee_intro.pdf)"
+            # pdf_source = f"예시 PDF ({st.session_state.get('example_pdf_label', '')})"
         elif pdf_file:
             pdf_bytes_to_process = pdf_file.read()
             # pdf_source = pdf_file.name
