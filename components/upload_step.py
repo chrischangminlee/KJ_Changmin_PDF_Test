@@ -5,7 +5,7 @@ import os
 import unicodedata
 from PyPDF2 import PdfReader
 from services.pdf_service import annotate_pdf_with_page_numbers, convert_pdf_to_images, extract_single_page_pdf
-from services.gemini_service import extract_category_from_page
+from services.gemini_service import extract_category_from_page, consolidate_items_with_llm
 
 def run_upload_step():
     st.header("PDF 업로드 및 항목 선택")
@@ -449,12 +449,26 @@ def display_extraction_results():
                     use_column_width=True
                 )
 
-    # 최종 취합 결과
+    # 최종 취합 + LLM 정리 결과
     st.markdown("### 📋 최종 취합 결과")
     all_items = []
     for items in st.session_state.page_results.values():
         all_items.extend(items)
-    if all_items:
-        st.info("\n".join(all_items))
-    else:
+
+    if not all_items:
         st.write("없음")
+        return
+
+    # 원본 취합값(접을 수 있는 영역)과 LLM 정리 결과를 함께 제공
+    with st.expander("원본 취합 목록 보기", expanded=False):
+        st.write("\n".join(all_items))
+
+    status_ph = st.empty()
+    consolidated = consolidate_items_with_llm(all_items, st.session_state.get('category', ''), status_ph)
+    status_ph.empty()
+
+    st.markdown("#### 🧠 LLM 정리 결과 (1줄 요약)")
+    if consolidated:
+        st.info("\n".join(consolidated))
+    else:
+        st.write("정리 결과가 없습니다.")
