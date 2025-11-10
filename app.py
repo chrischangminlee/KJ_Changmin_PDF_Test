@@ -1,14 +1,12 @@
 import streamlit as st
 import config
 from utils.session_state import init_session_state
-from components.sidebar import render_sidebar
 from components.upload_step import run_upload_step
 
 # 세션 초기화
 init_session_state()
 
-# 사이드바
-render_sidebar()
+# 사이드바 제거: 소개/사용방법/링크 섹션 비활성화
 
 # 메인 타이틀
 st.title("PDF AI 분석 도구")
