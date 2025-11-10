@@ -3,11 +3,12 @@ import pandas as pd
 import io
 import os
 import unicodedata
-from services.pdf_service import annotate_pdf_with_page_numbers, convert_pdf_to_images
-from services.gemini_service import find_relevant_pages_with_gemini, generate_final_summary, validate_answers_with_prompt
+from PyPDF2 import PdfReader
+from services.pdf_service import annotate_pdf_with_page_numbers, convert_pdf_to_images, extract_single_page_pdf
+from services.gemini_service import extract_category_from_page
 
 def run_upload_step():
-    st.header("PDF 업로드 및 질문 입력")
+    st.header("PDF 업로드 및 항목 선택")
 
     # 예시 PDF 로드 기능
     def load_example_pdf(example_pdf_path: str):
@@ -92,18 +93,27 @@ def run_upload_step():
                 pdf_file = st.file_uploader("PDF 파일을 선택하세요", type=['pdf'])
 
         with col4:
-            user_prompt_input = st.text_input("분석 요청사항 입력", placeholder="예:이창민의 경력")
+            category = st.selectbox(
+                "추출 항목 선택",
+                [
+                    "등급",
+                    "기술자격",
+                    "학력",
+                    "근무처",
+                    "상훈",
+                    "벌점 및 제재사항",
+                    "교육훈련",
+                ],
+            )
 
-        submitted = st.form_submit_button("PDF 분석 시작", type="primary")
+        submitted = st.form_submit_button("추출 시작", type="primary")
 
-    if submitted and user_prompt_input:
+    if submitted:
         # PDF 파일 확인
         if st.session_state.get('example_pdf_loaded', False):
             pdf_bytes_to_process = st.session_state['example_pdf_bytes']
-            # pdf_source = f"예시 PDF ({st.session_state.get('example_pdf_label', '')})"
         elif pdf_file:
             pdf_bytes_to_process = pdf_file.read()
-            # pdf_source = pdf_file.name
         else:
             st.error("PDF 파일을 선택하거나 예시 PDF를 로드해주세요.")
             st.stop()
@@ -116,7 +126,7 @@ def run_upload_step():
         try:
             # 세션 초기화
             st.session_state.analysis_results = []
-            st.session_state.user_prompt = user_prompt_input
+            st.session_state.category = category
 
             # 1단계: PDF 페이지 번호 삽입
             step1_placeholder.info("📝 **1/3단계:** PDF에 페이지 번호 삽입 중...")
@@ -133,42 +143,46 @@ def run_upload_step():
             else:
                 step2_placeholder.success("🖼️ **2/3단계:** PDF를 이미지로 변환 완료 ✅")
 
-            # 3단계: AI 분석 실행
-            step3_placeholder.info("🤖 **3/3단계:** AI가 관련 페이지 분석 중... (시간이 다소 걸릴 수 있습니다)")
-            
-            # 상태 업데이트용 placeholder 생성
+            # 3단계: 페이지별 AI 추출 실행
+            step3_placeholder.info("🤖 **3/3단계:** 페이지별 정보 추출 중... (시간이 다소 걸릴 수 있습니다)")
+
             status_placeholder = st.empty()
-            
-            # 배치 분석 방식으로 실행
-            pages, page_info = find_relevant_pages_with_gemini(
-                user_prompt_input, 
-                pdf_bytes=numbered_bytes, 
-                status_placeholder=status_placeholder
-            )
-            
-            # 분석 완료 후 상태 메시지 정리
+            reader = PdfReader(io.BytesIO(numbered_bytes))
+            total_pages = len(reader.pages)
+            page_results = {}
+            progress = st.progress(0)
+
+            for page_num in range(1, total_pages + 1):
+                progress.progress(page_num / total_pages)
+                status_placeholder.info(f"📄 페이지 {page_num}/{total_pages} 처리 중...")
+                single_page_bytes = extract_single_page_pdf(numbered_bytes, page_num)
+                if not single_page_bytes:
+                    continue
+                try:
+                    items = extract_category_from_page(single_page_bytes, category, status_placeholder)
+                    if items:
+                        page_results[page_num] = items
+                except Exception as e:
+                    status_placeholder.warning(f"⚠️ 페이지 {page_num} 처리 실패: {e}")
+                    continue
+
+            progress.empty()
             status_placeholder.empty()
-            
-            # 결과를 세션에 저장
-            st.session_state.relevant_pages = pages
-            st.session_state.page_info = page_info
-            
-            step3_placeholder.success("🤖 **3/3단계:** AI 관련 페이지 분석 완료 ✅")
+
+            st.session_state.page_results = page_results
+
+            step3_placeholder.success("🤖 **3/3단계:** 페이지별 정보 추출 완료 ✅")
 
             # 모든 진행 단계 블록 제거
             step1_placeholder.empty()
             step2_placeholder.empty()
             step3_placeholder.empty()
             
-            # 분석 완료 표시
-            if not pages:
-                st.error("❌ 관련 페이지를 찾을 수 없습니다. 다시 시도해주세요.")
-                return
-            else:
-                st.success(f"✅ **분석 완료!** AI가 {len(pages)}개의 관련 페이지를 찾았습니다!")
-            
             # 결과 표시
-            display_analysis_results()
+            if not st.session_state.page_results:
+                st.warning("관련 항목을 찾지 못했습니다.")
+            else:
+                display_extraction_results()
 
         except Exception as e:
             import traceback
@@ -184,9 +198,9 @@ def run_upload_step():
             st.code(traceback.format_exc())
             st.error("위 오류가 지속되면 페이지를 새로고침하고 다시 시도해주세요.")
     
-    # 이전 분석 결과가 있으면 표시
-    elif hasattr(st.session_state, 'relevant_pages') and st.session_state.relevant_pages:
-        display_analysis_results()
+    # 이전 추출 결과가 있으면 표시
+    elif hasattr(st.session_state, 'page_results') and st.session_state.page_results:
+        display_extraction_results()
 
 
 def display_analysis_results():
@@ -345,7 +359,102 @@ def display_analysis_results():
     if st.button("🔄 새로운 분석 시작", type="primary"):
         # 세션 상태 초기화
         for key in ['relevant_pages', 'page_info', 'user_prompt', 'refined_prompt', 'final_summary',
-                    'original_pdf_bytes', 'pdf_images', 'example_pdf_loaded', 'example_pdf_bytes']:
+                    'original_pdf_bytes', 'pdf_images', 'example_pdf_loaded', 'example_pdf_bytes',
+                    'page_results', 'category']:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
+
+
+def display_extraction_results():
+    """페이지별 추출 결과를 테이블과 미리보기, CSV로 제공"""
+    st.header("📊 추출 결과")
+    st.write(f"**추출 항목:** {st.session_state.get('category', '')}")
+
+    # 페이지별 결과 구성
+    rows = []
+    for page_num, items in sorted(st.session_state.page_results.items()):
+        rows.append({
+            '페이지': page_num,
+            '추출 결과': "\n".join(items) if items else ""
+        })
+
+    if not rows:
+        st.warning("표시할 결과가 없습니다.")
+        return
+
+    df = pd.DataFrame(rows)
+
+    st.markdown("### 📊 페이지별 결과")
+    col_headers = st.columns([1, 7, 2])
+    with col_headers[0]:
+        st.markdown("**페이지**")
+    with col_headers[1]:
+        st.markdown("**추출 결과**")
+    with col_headers[2]:
+        st.markdown("**상세보기 (하단에 표기됩니다)**")
+
+    st.markdown("---")
+
+    for _, row in df.iterrows():
+        cols = st.columns([1, 7, 2])
+        with cols[0]:
+            st.write(f"{row['페이지']}")
+        with cols[1]:
+            st.write(row['추출 결과'])
+        with cols[2]:
+            if st.button("🔍 미리보기", key=f"preview_{row['페이지']}"):
+                st.session_state.preview_page = row['페이지']
+                st.session_state.preview_data = row
+
+    st.markdown("---")
+
+    # CSV 다운로드
+    csv_buffer = io.StringIO()
+    df_csv = df[['페이지', '추출 결과']]
+    df_csv.to_csv(csv_buffer, index=False, encoding='utf-8')
+    csv_data = csv_buffer.getvalue().encode('utf-8-sig')
+
+    st.download_button(
+        label="📥 페이지 별 결과 CSV 형태로 다운받기",
+        data=csv_data,
+        file_name=f"추출결과_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv;charset=utf-8-sig",
+        type="primary"
+    )
+
+    st.markdown("---")
+
+    # 미리보기
+    if hasattr(st.session_state, 'preview_page') and st.session_state.preview_page:
+        st.markdown("---")
+        st.markdown("### 📄 페이지 {} 미리보기".format(st.session_state.preview_page))
+        page_num = st.session_state.preview_page
+        page_data = st.session_state.preview_data
+        col1, col2 = st.columns([8, 1])
+        with col1:
+            st.write(f"**추출 결과:**\n{page_data['추출 결과']}")
+        with col2:
+            if st.button("❌ 닫기", key="close_preview"):
+                del st.session_state.preview_page
+                del st.session_state.preview_data
+                st.rerun()
+
+        if hasattr(st.session_state, 'pdf_images') and st.session_state.pdf_images:
+            page_idx = page_num - 1
+            if 0 <= page_idx < len(st.session_state.pdf_images):
+                st.image(
+                    st.session_state.pdf_images[page_idx], 
+                    caption=f"페이지 {page_num}", 
+                    use_column_width=True
+                )
+
+    # 최종 취합 결과
+    st.markdown("### 📋 최종 취합 결과")
+    all_items = []
+    for items in st.session_state.page_results.values():
+        all_items.extend(items)
+    if all_items:
+        st.info("\n".join(all_items))
+    else:
+        st.write("없음")

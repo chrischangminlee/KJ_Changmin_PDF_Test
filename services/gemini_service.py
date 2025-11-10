@@ -336,6 +336,98 @@ def analyze_pdf_batch(batch_path, refined_prompt, batch_info, status_placeholder
     model = genai.GenerativeModel(GEMINI_MODEL)
     return call_gemini_with_retry(model, [batch_file, prompt], status_placeholder=status_placeholder)
 
+def _build_extraction_prompt(category: str) -> str:
+    """선택된 항목(category)에 맞춘 페이지 단위 추출 프롬프트를 생성"""
+    instructions = {
+        "등급": (
+            "이 페이지에서 인물의 등급(Grade/Level/직급과 구분되는 '등급' 표기)을 모두 찾아 간결히 나열하세요."
+        ),
+        "기술자격": (
+            "이 페이지에서 국가기술자격을 모두 추출하세요. 각 항목은 '자격명(등급) - 발급기관 - 취득(발급)일자' 형태의 한 줄 문자열로 구성하세요."
+        ),
+        "학력": (
+            "이 페이지에서 졸업학교와 학과를 모두 추출하세요. 각 항목을 '학교명 - 학과/전공 - 졸업연도(가능하면)' 한 줄로 요약하세요."
+        ),
+        "근무처": (
+            "이 페이지에서 근무처(회사/기관) 정보를 추출하세요. 각 항목을 '근무처 - 부서/직무 - 직급/직위(가능하면) - 근무기간(가능하면)' 형식 한 줄로 작성하세요."
+        ),
+        "상훈": (
+            "이 페이지에서 상훈/포상 내역을 추출하세요. 각 항목을 '상훈명 - 수여기관 - 수여일자(가능하면)' 한 줄로 작성하세요."
+        ),
+        "벌점 및 제재사항": (
+            "이 페이지에서 벌점/제재/징계 내역을 추출하세요. 각 항목을 '구분 - 사유 - 일자(가능하면)' 한 줄로 작성하세요."
+        ),
+        "교육훈련": (
+            "이 페이지에서 교육/훈련 이력을 추출하세요. 각 항목을 '과정명 - 기관 - 기간 또는 시간(가능하면)' 한 줄로 작성하세요."
+        ),
+    }
+
+    detail = instructions.get(category, "이 페이지에서 관련 항목을 간결히 나열하세요.")
+    prompt = f"""
+당신은 이력/경력 문서에서 특정 항목만 정확히 추출하는 전문가입니다.
+이 파일은 한 페이지짜리 PDF이며, 오직 이 페이지에 나타나는 정보만 사용하세요.
+
+요청 항목: {category}
+지침: {detail}
+
+출력 형식은 반드시 아래 JSON만 반환하세요. 불필요한 설명/텍스트 금지.
+```json
+{{
+  "items": ["항목1", "항목2"]
+}}
+```
+
+규칙:
+- 페이지에 존재하지 않는 정보는 만들지 마세요.
+- 중복되는 항목은 제거하세요.
+- 항목이 없으면 items는 빈 배열로 반환하세요.
+"""
+    return prompt
+
+def _parse_items_json(resp_text: str):
+    """Gemini 응답에서 items 배열을 파싱"""
+    try:
+        if not resp_text:
+            return []
+        if "```json" in resp_text:
+            json_str = resp_text.split("```json")[1].split("```")[0].strip()
+        elif "{" in resp_text and "}" in resp_text:
+            start = resp_text.find("{")
+            end = resp_text.rfind("}") + 1
+            json_str = resp_text[start:end]
+        else:
+            return []
+        data = json.loads(json_str)
+        items = data.get("items", [])
+        # 문자열만 유지
+        return [str(x).strip() for x in items if str(x).strip()]
+    except Exception:
+        return []
+
+def extract_category_from_page(page_pdf_bytes: bytes, category: str, status_placeholder=None):
+    """단일 페이지 PDF 바이트에 대해 선택된 항목을 추출하여 문자열 리스트 반환"""
+    try:
+        if status_placeholder:
+            status_placeholder.info(f"🔎 '{category}' 항목 추출 중…")
+
+        # 임시 파일로 저장 후 업로드
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(page_pdf_bytes)
+            tmp_path = tmp.name
+
+        page_file = genai.upload_file(tmp_path)
+        prompt = _build_extraction_prompt(category)
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        resp = call_gemini_with_retry(model, [page_file, prompt], max_retries=2, base_delay=1)
+        items = _parse_items_json(resp)
+        return items
+    finally:
+        try:
+            if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except Exception:
+            pass
+
 def enhance_user_prompt(user_prompt, status_placeholder=None):
     """사용자의 초기 프롬프트를 더 명확하고 구체적으로 개선"""
     try:
