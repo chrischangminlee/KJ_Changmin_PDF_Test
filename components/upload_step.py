@@ -417,7 +417,7 @@ def display_extraction_results():
         with cols[0]:
             st.write(f"{row['페이지']}")
         with cols[1]:
-            st.write(row['추출 결과'])
+            st.text(row['추출 결과'])
         with cols[2]:
             if st.button("🔍 미리보기", key=f"preview_{row['페이지']}"):
                 st.session_state.preview_page = row['페이지']
@@ -449,7 +449,8 @@ def display_extraction_results():
         page_data = st.session_state.preview_data
         col1, col2 = st.columns([8, 1])
         with col1:
-            st.write(f"**추출 결과:**\n{page_data['추출 결과']}")
+            st.markdown("**추출 결과:**")
+            st.text(page_data['추출 결과'])
         with col2:
             if st.button("❌ 닫기", key="close_preview"):
                 del st.session_state.preview_page
@@ -476,16 +477,20 @@ def display_extraction_results():
         st.write("없음")
         return
 
-    # 원본 취합값(접을 수 있는 영역)과 LLM 정리 결과를 함께 제공
+    # 원본 취합값(정규화 전, 페이지별 추출 원문)과 LLM 정리 결과를 함께 제공
+    raw_items = []
+    for items in st.session_state.page_results.values():
+        raw_items.extend(items)
     with st.expander("원본 취합 목록 보기", expanded=False):
-        st.write("\n".join(all_items))
+        st.text("\n".join(raw_items))
 
     status_ph = st.empty()
     consolidated = consolidate_items_with_llm(all_items, st.session_state.get('category', ''), status_ph)
     status_ph.empty()
 
-    st.markdown("#### 🧠 LLM 정리 결과 (1줄 요약)")
+    st.markdown("#### 🧠 LLM 정리 결과 (정규화/중복 제거, 항목당 1줄)")
     if consolidated:
-        st.info("\n".join(consolidated))
+        # 줄바꿈 렌더링을 위해 마크다운 목록 사용
+        st.markdown("\n".join([f"- {x}" for x in consolidated]))
     else:
         st.write("정리 결과가 없습니다.")
