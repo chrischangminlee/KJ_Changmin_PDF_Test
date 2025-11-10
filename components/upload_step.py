@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import io
+import os
+import unicodedata
 from services.pdf_service import annotate_pdf_with_page_numbers, convert_pdf_to_images
 from services.gemini_service import find_relevant_pages_with_gemini, generate_final_summary, validate_answers_with_prompt
 
@@ -16,6 +18,21 @@ def run_upload_step():
         except Exception as e:
             st.error(f"예시 PDF 로드 실패: {e}")
             return None
+
+    # 파일명 정규화 기반 경로 탐색 유틸
+    def resolve_example_pdf_path(dir_path: str, target_filename_nfc: str):
+        """디렉토리 내 파일명을 유니코드 정규화(NFC/NFD)하여 대상 파일을 탐색"""
+        try:
+            for name in os.listdir(dir_path):
+                # 파일명 비교 시 NFC 기준으로 비교
+                if unicodedata.normalize('NFC', name) == target_filename_nfc:
+                    return os.path.join(dir_path, name)
+                # 보수적으로 NFD 비교도 수행
+                if unicodedata.normalize('NFD', name) == unicodedata.normalize('NFD', target_filename_nfc):
+                    return os.path.join(dir_path, name)
+        except FileNotFoundError:
+            return None
+        return None
 
     # 예시 PDF 불러오기 / 제거 버튼
     st.write("예시 PDF를 활용하거나, PDF를 불러오세요")
@@ -35,11 +52,11 @@ def run_upload_step():
     if not st.session_state.get('example_pdf_loaded', False):
         with col2:
             if st.button("📄 예시 PDF (구본명_경력증명서) 불러오기", type="secondary", key="load_example_gubm"):
-                path = "Filereference/구본명_경력증명서(24.09.12).pdf"
-                # 실제 파일명은 유니코드 정규화로 저장되어 있을 수 있으므로 그대로 경로 사용
-                # 위 경로는 시각적으로 표현한 것이며, 실제 파일명은 파일 시스템 상의 이름과 동일해야 함
-                # 실제 파일명 사용을 위해 디렉터리 내 존재하는 파일명을 그대로 명시
-                path = "Filereference/구본명_경력증명서(24.09.12).pdf"
+                target = "구본명_경력증명서(24.09.12).pdf"
+                path = resolve_example_pdf_path("Filereference", target)
+                if not path:
+                    st.error(f"예시 PDF 로드 실패: Filereference 폴더에서 '{target}' 파일을 찾을 수 없습니다.")
+                    st.stop()
                 example_pdf_bytes = load_example_pdf(path)
                 if example_pdf_bytes:
                     st.session_state['example_pdf_loaded'] = True
@@ -50,8 +67,11 @@ def run_upload_step():
                     st.rerun()
         with col3:
             if st.button("📄 예시 PDF (윤덕철_경력증명서) 불러오기", type="secondary", key="load_example_yundc"):
-                path = "Filereference/윤덕철_경력증명서(23.11.13).pdf"
-                path = "Filereference/윤덕철_경력증명서(23.11.13).pdf"
+                target = "윤덕철_경력증명서(23.11.13).pdf"
+                path = resolve_example_pdf_path("Filereference", target)
+                if not path:
+                    st.error(f"예시 PDF 로드 실패: Filereference 폴더에서 '{target}' 파일을 찾을 수 없습니다.")
+                    st.stop()
                 example_pdf_bytes = load_example_pdf(path)
                 if example_pdf_bytes:
                     st.session_state['example_pdf_loaded'] = True
